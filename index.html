@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 3D Gaussian Splatting</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="info">
+    <h1>3D Gaussian Splatting</h1>
+    <p>Drag to rotate • Scroll to zoom</p>
+    <div id="status">Initializing WebGPU...</div>
+  </div>
+  <div id="fps">-- FPS</div>
+  <canvas id="canvas"></canvas>
+  <input type="file" id="fileInput" accept=".ply,.splat" hidden>
+  <button id="loadBtn">Load .ply / .splat</button>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
