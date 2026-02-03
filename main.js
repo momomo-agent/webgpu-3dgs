@@ -6,14 +6,22 @@ const loadBtn = document.getElementById('loadBtn');
 const fileInput = document.getElementById('fileInput');
 
 let device, context, format;
-let camera = { x: 0, y: 0, z: 5, rotX: 0, rotY: 0 };
+let camera = { x: 0, y: 0, z: 3, rotX: 0.3, rotY: 0.5 };
 let isDragging = false;
 let lastMouse = { x: 0, y: 0 };
+let animating = true;
 
-// Gaussian data
-let gaussians = null;
+// Buffers
 let vertexBuffer = null;
+let uniformBuffer = null;
+let bindGroup = null;
 let pipeline = null;
+let vertexCount = 0;
+
+// 性能优化：使用 RAF 时间戳
+let lastFrameTime = 0;
+let frameCount = 0;
+let fpsUpdateTime = 0;
 
 // Init WebGPU
 async function initWebGPU() {
@@ -23,107 +31,72 @@ async function initWebGPU() {
     return false;
   }
   
-  const adapter = await navigator.gpu.requestAdapter();
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   device = await adapter.requestDevice();
   
   context = canvas.getContext('webgpu');
   format = navigator.gpu.getPreferredCanvasFormat();
-  
   context.configure({ device, format, alphaMode: 'opaque' });
   
   resize();
-  status.textContent = 'WebGPU ready. Load a .ply file';
   return true;
 }
 
-// Resize handler
 function resize() {
   canvas.width = window.innerWidth * devicePixelRatio;
   canvas.height = window.innerHeight * devicePixelRatio;
 }
 
-// Shader code
+// Shader - 优化版本，使用 point sprites
 const shaderCode = `
 struct Uniforms {
   mvp: mat4x4f,
-  viewport: vec2f,
+  pointSize: f32,
 }
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var<uniform> u: Uniforms;
 
-struct VertexOutput {
-  @builtin(position) position: vec4f,
-  @location(0) color: vec4f,
-}
-
-@vertex
-fn vs_main(
-  @location(0) pos: vec3f,
-  @location(1) col: vec4f
-) -> VertexOutput {
-  var out: VertexOutput;
-  out.position = uniforms.mvp * vec4f(pos, 1.0);
-  out.color = col;
-  return out;
+struct VSOut {
+  @builtin(position) pos: vec4f,
+  @location(0) col: vec4f,
+  @builtin(point_size) size: f32,
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-  return in.color;
+@vertex fn vs(@location(0) p: vec3f, @location(1) c: vec4f) -> VSOut {
+  var o: VSOut;
+  o.pos = u.mvp * vec4f(p, 1.0);
+  o.col = c;
+  o.size = u.pointSize / o.pos.w;
+  return o;
+}
+
+@fragment fn fs(in: VSOut) -> @location(0) vec4f {
+  return in.col;
 }
 `;
 
-// Parse PLY file
-async function parsePLY(buffer) {
-  const decoder = new TextDecoder();
-  const text = decoder.decode(buffer);
-  const lines = text.split('\n');
-  
-  let vertexCount = 0;
-  let headerEnd = 0;
-  
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith('element vertex')) {
-      vertexCount = parseInt(lines[i].split(' ')[2]);
-    }
-    if (lines[i] === 'end_header') {
-      headerEnd = i + 1;
-      break;
-    }
-  }
-  
-  status.textContent = `Parsing ${vertexCount} gaussians...`;
-  return { vertexCount, headerEnd, lines };
-}
-
-// Create render pipeline
-let uniformBuffer, bindGroup;
-
+// 创建渲染管线
 function createPipeline() {
-  const shaderModule = device.createShaderModule({ code: shaderCode });
+  const shader = device.createShaderModule({ code: shaderCode });
   
   uniformBuffer = device.createBuffer({
     size: 80,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   
-  const bindGroupLayout = device.createBindGroupLayout({
-    entries: [{
-      binding: 0,
-      visibility: GPUShaderStage.VERTEX,
-      buffer: { type: 'uniform' }
-    }]
+  const layout = device.createBindGroupLayout({
+    entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: {} }]
   });
   
   bindGroup = device.createBindGroup({
-    layout: bindGroupLayout,
+    layout,
     entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
   });
   
   pipeline = device.createRenderPipeline({
-    layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+    layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
     vertex: {
-      module: shaderModule,
-      entryPoint: 'vs_main',
+      module: shader,
+      entryPoint: 'vs',
       buffers: [{
         arrayStride: 28,
         attributes: [
@@ -133,15 +106,15 @@ function createPipeline() {
       }]
     },
     fragment: {
-      module: shaderModule,
-      entryPoint: 'fs_main',
+      module: shader,
+      entryPoint: 'fs',
       targets: [{ format }]
     },
     primitive: { topology: 'point-list' }
   });
 }
 
-// Matrix helpers
+// 矩阵运算
 function perspective(fov, aspect, near, far) {
   const f = 1 / Math.tan(fov / 2);
   return new Float32Array([
@@ -164,48 +137,104 @@ function lookAt() {
 }
 
 function mulMat4(a, b) {
-  const out = new Float32Array(16);
+  const o = new Float32Array(16);
   for (let i = 0; i < 4; i++) {
     for (let j = 0; j < 4; j++) {
-      out[i*4+j] = a[i*4]*b[j] + a[i*4+1]*b[4+j] + a[i*4+2]*b[8+j] + a[i*4+3]*b[12+j];
+      o[i*4+j] = a[i*4]*b[j] + a[i*4+1]*b[4+j] + a[i*4+2]*b[8+j] + a[i*4+3]*b[12+j];
     }
   }
-  return out;
+  return o;
 }
 
-// FPS counter
-let frameCount = 0, lastTime = performance.now();
-function updateFPS() {
-  frameCount++;
-  const now = performance.now();
-  if (now - lastTime >= 1000) {
-    fpsEl.textContent = `${frameCount} FPS`;
-    frameCount = 0;
-    lastTime = now;
+// 生成默认点云 - 彩色球体
+function generateDefaultCloud() {
+  const count = 50000;
+  const data = new Float32Array(count * 7);
+  
+  for (let i = 0; i < count; i++) {
+    // 球面均匀分布
+    const u = Math.random(), v = Math.random();
+    const theta = 2 * Math.PI * u;
+    const phi = Math.acos(2 * v - 1);
+    const r = 0.8 + Math.random() * 0.2;
+    
+    data[i*7] = r * Math.sin(phi) * Math.cos(theta);
+    data[i*7+1] = r * Math.sin(phi) * Math.sin(theta);
+    data[i*7+2] = r * Math.cos(phi);
+    
+    // HSL 颜色基于位置
+    const h = (Math.atan2(data[i*7+1], data[i*7]) + Math.PI) / (2 * Math.PI);
+    const s = 0.8, l = 0.6;
+    const c = (1 - Math.abs(2*l - 1)) * s;
+    const x = c * (1 - Math.abs((h*6) % 2 - 1));
+    const m = l - c/2;
+    let r1, g1, b1;
+    const hi = Math.floor(h * 6);
+    if (hi === 0) { r1=c; g1=x; b1=0; }
+    else if (hi === 1) { r1=x; g1=c; b1=0; }
+    else if (hi === 2) { r1=0; g1=c; b1=x; }
+    else if (hi === 3) { r1=0; g1=x; b1=c; }
+    else if (hi === 4) { r1=x; g1=0; b1=c; }
+    else { r1=c; g1=0; b1=x; }
+    
+    data[i*7+3] = r1 + m;
+    data[i*7+4] = g1 + m;
+    data[i*7+5] = b1 + m;
+    data[i*7+6] = 1.0;
   }
+  
+  return { data, count };
 }
 
-// Render
-let vertexCount = 0;
-function render() {
+// 加载点云数据到 GPU
+function loadCloud(data, count) {
+  vertexCount = count;
+  vertexBuffer = device.createBuffer({
+    size: data.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(vertexBuffer, 0, data);
+  status.textContent = `${count.toLocaleString()} points`;
+}
+
+// 渲染循环
+function render(time) {
   if (!pipeline || !vertexBuffer) {
     requestAnimationFrame(render);
-    updateFPS();
     return;
   }
   
+  // 自动旋转
+  if (animating && !isDragging) {
+    camera.rotY += 0.005;
+  }
+  
+  // FPS 计算
+  frameCount++;
+  if (time - fpsUpdateTime >= 1000) {
+    fpsEl.textContent = `${frameCount} FPS`;
+    frameCount = 0;
+    fpsUpdateTime = time;
+  }
+  
+  // MVP 矩阵
   const aspect = canvas.width / canvas.height;
-  const proj = perspective(Math.PI / 4, aspect, 0.1, 1000);
+  const proj = perspective(Math.PI / 4, aspect, 0.1, 100);
   const view = lookAt();
   const mvp = mulMat4(proj, view);
   
-  device.queue.writeBuffer(uniformBuffer, 0, mvp);
+  // 更新 uniform
+  const uniformData = new Float32Array(20);
+  uniformData.set(mvp, 0);
+  uniformData[16] = 3.0; // pointSize
+  device.queue.writeBuffer(uniformBuffer, 0, uniformData);
   
+  // 渲染
   const encoder = device.createCommandEncoder();
   const pass = encoder.beginRenderPass({
     colorAttachments: [{
       view: context.getCurrentTexture().createView(),
-      clearValue: { r: 0.04, g: 0.04, b: 0.04, a: 1 },
+      clearValue: { r: 0.02, g: 0.02, b: 0.03, a: 1 },
       loadOp: 'clear',
       storeOp: 'store'
     }]
@@ -218,11 +247,10 @@ function render() {
   pass.end();
   
   device.queue.submit([encoder.finish()]);
-  updateFPS();
   requestAnimationFrame(render);
 }
 
-// Mouse controls
+// 鼠标控制
 canvas.addEventListener('mousedown', e => {
   isDragging = true;
   lastMouse = { x: e.clientX, y: e.clientY };
@@ -232,6 +260,7 @@ canvas.addEventListener('mousemove', e => {
   if (!isDragging) return;
   camera.rotY += (e.clientX - lastMouse.x) * 0.01;
   camera.rotX += (e.clientY - lastMouse.y) * 0.01;
+  camera.rotX = Math.max(-1.5, Math.min(1.5, camera.rotX));
   lastMouse = { x: e.clientX, y: e.clientY };
 });
 
@@ -239,58 +268,59 @@ canvas.addEventListener('mouseup', () => isDragging = false);
 canvas.addEventListener('mouseleave', () => isDragging = false);
 
 canvas.addEventListener('wheel', e => {
-  camera.z += e.deltaY * 0.01;
-  camera.z = Math.max(1, Math.min(50, camera.z));
+  camera.z += e.deltaY * 0.005;
+  camera.z = Math.max(1, Math.min(10, camera.z));
 });
 
-// File loading
+// PLY 文件加载
 loadBtn.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', async e => {
   const file = e.target.files[0];
   if (!file) return;
-  
-  status.textContent = 'Loading file...';
+  status.textContent = 'Loading...';
   const buffer = await file.arrayBuffer();
-  await loadPLY(buffer);
+  await parsePLY(buffer);
 });
 
-async function loadPLY(buffer) {
-  const { vertexCount: count, headerEnd, lines } = await parsePLY(buffer);
-  vertexCount = count;
+async function parsePLY(buffer) {
+  const text = new TextDecoder().decode(buffer);
+  const lines = text.split('\n');
   
-  // Parse vertices (position + color)
-  const data = new Float32Array(vertexCount * 7);
-  for (let i = 0; i < vertexCount; i++) {
-    const parts = lines[headerEnd + i].trim().split(/\s+/);
-    // x, y, z
-    data[i*7] = parseFloat(parts[0]);
-    data[i*7+1] = parseFloat(parts[1]);
-    data[i*7+2] = parseFloat(parts[2]);
-    // r, g, b, a (normalized)
-    data[i*7+3] = (parseFloat(parts[3]) || 128) / 255;
-    data[i*7+4] = (parseFloat(parts[4]) || 128) / 255;
-    data[i*7+5] = (parseFloat(parts[5]) || 128) / 255;
-    data[i*7+6] = 1.0;
+  let count = 0, headerEnd = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('element vertex')) {
+      count = parseInt(lines[i].split(' ')[2]);
+    }
+    if (lines[i] === 'end_header') {
+      headerEnd = i + 1;
+      break;
+    }
   }
   
-  vertexBuffer = device.createBuffer({
-    size: data.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-  });
-  device.queue.writeBuffer(vertexBuffer, 0, data);
-  
-  status.textContent = `Loaded ${vertexCount} gaussians`;
+  const data = new Float32Array(count * 7);
+  for (let i = 0; i < count; i++) {
+    const p = lines[headerEnd + i].trim().split(/\s+/);
+    data[i*7] = parseFloat(p[0]);
+    data[i*7+1] = parseFloat(p[1]);
+    data[i*7+2] = parseFloat(p[2]);
+    data[i*7+3] = (parseFloat(p[3]) || 128) / 255;
+    data[i*7+4] = (parseFloat(p[4]) || 128) / 255;
+    data[i*7+5] = (parseFloat(p[5]) || 128) / 255;
+    data[i*7+6] = 1.0;
+  }
+  loadCloud(data, count);
 }
 
-// Resize
 window.addEventListener('resize', resize);
 
-// Init
+// 初始化
 async function init() {
   if (await initWebGPU()) {
     createPipeline();
-    render();
+    const { data, count } = generateDefaultCloud();
+    loadCloud(data, count);
+    requestAnimationFrame(render);
   }
 }
 
