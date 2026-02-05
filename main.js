@@ -19,7 +19,7 @@ let vertexCount = 0;
 let depthTexture = null;
 let frameCount = 0;
 let fpsUpdateTime = 0;
-let pointSizeMultiplier = 10;
+let pointSizeMultiplier = 5;
 
 // Init WebGPU
 async function initWebGPU() {
