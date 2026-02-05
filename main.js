@@ -136,49 +136,20 @@ function generateScene() {
     for (let i = 0; i < n; i++) {
       const u = Math.random(), v = Math.random();
       const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1);
-      const vary = 0.85 + Math.random() * 0.3;
+      const vary = 0.9 + Math.random() * 0.2;
       pts.push({
         x: cx + rx * Math.sin(phi) * Math.cos(theta),
         y: cy + ry * Math.cos(phi),
         z: cz + rz * Math.sin(phi) * Math.sin(theta),
-        r: Math.min(1, col[0] * vary), g: Math.min(1, col[1] * vary), b: Math.min(1, col[2] * vary)
+        r: Math.min(1, col[0] * vary), 
+        g: Math.min(1, col[1] * vary), 
+        b: Math.min(1, col[2] * vary)
       });
     }
   };
   
-  // 地面 - 草地
-  for (let i = 0; i < 15000; i++) {
-    const x = (Math.random() - 0.5) * 3;
-    const z = (Math.random() - 0.5) * 3;
-    const g = 0.3 + Math.random() * 0.4;
-    pts.push({ x, y: -0.5, z, r: 0.1 + Math.random() * 0.1, g, b: 0.1 });
-  }
-  
-  // 树干
-  add(0.8, -0.1, 0.5, 0.08, 0.4, 0.08, 3000, [0.4, 0.25, 0.1]);
-  // 树冠
-  add(0.8, 0.5, 0.5, 0.35, 0.35, 0.35, 8000, [0.15, 0.5, 0.15]);
-  
-  // 小房子 - 墙壁
-  for (let i = 0; i < 5000; i++) {
-    const side = Math.floor(Math.random() * 4);
-    let x, z;
-    if (side === 0) { x = -0.8; z = (Math.random() - 0.5) * 0.5; }
-    else if (side === 1) { x = -0.3; z = (Math.random() - 0.5) * 0.5; }
-    else if (side === 2) { x = -0.55 + (Math.random() - 0.5) * 0.5; z = -0.25; }
-    else { x = -0.55 + (Math.random() - 0.5) * 0.5; z = 0.25; }
-    const y = -0.5 + Math.random() * 0.5;
-    pts.push({ x, y, z, r: 0.9, g: 0.85, b: 0.7 });
-  }
-  // 屋顶
-  add(-0.55, 0.15, 0, 0.35, 0.15, 0.35, 4000, [0.6, 0.2, 0.15]);
-  
-  // 太阳
-  add(1.2, 1.0, -0.5, 0.15, 0.15, 0.15, 3000, [1, 0.9, 0.3]);
-  
-  // 云朵
-  add(-0.5, 0.9, -0.8, 0.25, 0.1, 0.15, 2000, [1, 1, 1]);
-  add(-0.2, 0.85, -0.7, 0.2, 0.08, 0.12, 1500, [0.95, 0.95, 0.95]);
+  // 简单的彩色球体
+  add(0, 0, 0, 0.8, 0.8, 0.8, 30000, [0.2, 0.6, 1.0]);
   
   return pts;
 }
