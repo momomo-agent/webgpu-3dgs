@@ -51,23 +51,36 @@ function resize() {
 const shaderCode = `
 struct Uniforms { mvp: mat4x4f, pointSize: f32, aspect: f32 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
-struct VSOut { @builtin(position) pos: vec4f, @location(0) col: vec4f }
+struct VSOut { @builtin(position) pos: vec4f, @location(0) col: vec4f, @location(1) uv: vec2f }
 
 @vertex fn vs(@location(0) p: vec3f, @location(1) c: vec4f, @builtin(vertex_index) vid: u32) -> VSOut {
   var o: VSOut;
   let basePos = u.mvp * vec4f(p, 1.0);
-  let triIdx = vid % 3u;
-  let size = u.pointSize * 0.004;
+  // 6 vertices per quad (2 triangles)
+  let quadIdx = vid % 6u;
+  let size = u.pointSize * 0.006;
   var offset = vec2f(0.0);
-  if (triIdx == 0u) { offset = vec2f(0.0, size); }
-  else if (triIdx == 1u) { offset = vec2f(-size * 0.866, -size * 0.5); }
-  else { offset = vec2f(size * 0.866, -size * 0.5); }
-  o.pos = basePos + vec4f(offset.x / u.aspect, offset.y, 0.0, 0.0);
+  var uv = vec2f(0.0);
+  // Triangle 1: 0,1,2  Triangle 2: 0,2,3
+  if (quadIdx == 0u) { offset = vec2f(-1.0, -1.0); uv = vec2f(-1.0, -1.0); }
+  else if (quadIdx == 1u) { offset = vec2f(1.0, -1.0); uv = vec2f(1.0, -1.0); }
+  else if (quadIdx == 2u) { offset = vec2f(1.0, 1.0); uv = vec2f(1.0, 1.0); }
+  else if (quadIdx == 3u) { offset = vec2f(-1.0, -1.0); uv = vec2f(-1.0, -1.0); }
+  else if (quadIdx == 4u) { offset = vec2f(1.0, 1.0); uv = vec2f(1.0, 1.0); }
+  else { offset = vec2f(-1.0, 1.0); uv = vec2f(-1.0, 1.0); }
+  o.pos = basePos + vec4f(offset.x * size / u.aspect, offset.y * size, 0.0, 0.0);
   o.col = c;
+  o.uv = uv;
   return o;
 }
 
-@fragment fn fs(in: VSOut) -> @location(0) vec4f { return in.col; }
+@fragment fn fs(in: VSOut) -> @location(0) vec4f {
+  let d = length(in.uv);
+  if (d > 1.0) { discard; }
+  // Gaussian falloff for soft splat
+  let alpha = exp(-d * d * 2.0);
+  return vec4f(in.col.rgb, in.col.a * alpha);
+}
 `;
 
 function createPipeline() {
@@ -86,7 +99,13 @@ function createPipeline() {
         { shaderLocation: 1, offset: 12, format: 'float32x4' }
       ]}]
     },
-    fragment: { module: shader, entryPoint: 'fs', targets: [{ format }] },
+    fragment: { module: shader, entryPoint: 'fs', targets: [{ 
+      format,
+      blend: {
+        color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+      }
+    }] },
     primitive: { topology: 'triangle-list' },
     depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' }
   });
@@ -140,12 +159,12 @@ function generateBunny() {
 
 function generateDefaultCloud() {
   const points = generateBunny();
-  const count = points.length * 3;
+  const count = points.length * 6; // 6 vertices per quad
   const data = new Float32Array(count * 7);
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
-    for (let j = 0; j < 3; j++) {
-      const idx = (i * 3 + j) * 7;
+    for (let j = 0; j < 6; j++) {
+      const idx = (i * 6 + j) * 7;
       data[idx] = p.x; data[idx+1] = p.y; data[idx+2] = p.z;
       data[idx+3] = p.r; data[idx+4] = p.g; data[idx+5] = p.b; data[idx+6] = 1.0;
     }
@@ -157,7 +176,7 @@ function loadCloud(data, count) {
   vertexCount = count;
   vertexBuffer = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(vertexBuffer, 0, data);
-  status.textContent = `${(count/3).toLocaleString()} points`;
+  status.textContent = `${(count/6).toLocaleString()} points`;
 }
 
 function render(time) {
@@ -211,14 +230,14 @@ async function parsePLY(buffer) {
     if (lines[i].startsWith('element vertex')) pointCount = parseInt(lines[i].split(' ')[2]);
     if (lines[i] === 'end_header') { headerEnd = i + 1; break; }
   }
-  const vertCount = pointCount * 3;
+  const vertCount = pointCount * 6;
   const data = new Float32Array(vertCount * 7);
   for (let i = 0; i < pointCount; i++) {
     const p = lines[headerEnd + i].trim().split(/\s+/);
     const x = parseFloat(p[0]), y = parseFloat(p[1]), z = parseFloat(p[2]);
     const r = (parseFloat(p[3]) || 128) / 255, g = (parseFloat(p[4]) || 128) / 255, b = (parseFloat(p[5]) || 128) / 255;
-    for (let j = 0; j < 3; j++) {
-      const idx = (i * 3 + j) * 7;
+    for (let j = 0; j < 6; j++) {
+      const idx = (i * 6 + j) * 7;
       data[idx] = x; data[idx+1] = y; data[idx+2] = z;
       data[idx+3] = r; data[idx+4] = g; data[idx+5] = b; data[idx+6] = 1.0;
     }
