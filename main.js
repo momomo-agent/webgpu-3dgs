@@ -58,7 +58,7 @@ struct VSOut { @builtin(position) pos: vec4f, @location(0) col: vec4f, @location
   let basePos = u.mvp * vec4f(p, 1.0);
   // 6 vertices per quad (2 triangles)
   let quadIdx = vid % 6u;
-  let size = u.pointSize * 0.003;
+  let size = u.pointSize * 0.008;
   var offset = vec2f(0.0);
   var uv = vec2f(0.0);
   // Triangle 1: 0,1,2  Triangle 2: 0,2,3
