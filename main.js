@@ -17,6 +17,7 @@ let uniformBuffer = null;
 let bindGroup = null;
 let pipeline = null;
 let vertexCount = 0;
+let depthTexture = null;
 
 // 性能优化：使用 RAF 时间戳
 let lastFrameTime = 0;
@@ -45,6 +46,15 @@ async function initWebGPU() {
 function resize() {
   canvas.width = window.innerWidth * devicePixelRatio;
   canvas.height = window.innerHeight * devicePixelRatio;
+  
+  // 重建深度纹理
+  if (device) {
+    depthTexture = device.createTexture({
+      size: [canvas.width, canvas.height],
+      format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT
+    });
+  }
 }
 
 // Shader - 使用小三角形代替点（WebGPU 不支持 point_size）
@@ -67,7 +77,7 @@ struct VSOut {
   
   // 每个点用3个顶点画一个小三角形
   let triIdx = vid % 3u;
-  let size = u.pointSize / basePos.w * 0.01;
+  let size = u.pointSize * 0.008;
   var offset = vec2f(0.0, 0.0);
   if (triIdx == 0u) { offset = vec2f(0.0, size); }
   else if (triIdx == 1u) { offset = vec2f(-size * 0.866, -size * 0.5); }
@@ -119,7 +129,12 @@ function createPipeline() {
       entryPoint: 'fs',
       targets: [{ format }]
     },
-    primitive: { topology: 'triangle-list' }
+    primitive: { topology: 'triangle-list' },
+    depthStencil: {
+      format: 'depth24plus',
+      depthWriteEnabled: true,
+      depthCompare: 'less'
+    }
   });
 }
 
@@ -255,7 +270,13 @@ function render(time) {
       clearValue: { r: 0.02, g: 0.02, b: 0.03, a: 1 },
       loadOp: 'clear',
       storeOp: 'store'
-    }]
+    }],
+    depthStencilAttachment: {
+      view: depthTexture.createView(),
+      depthClearValue: 1.0,
+      depthLoadOp: 'clear',
+      depthStoreOp: 'store'
+    }
   });
   
   pass.setPipeline(pipeline);
