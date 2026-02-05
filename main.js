@@ -326,10 +326,10 @@ async function parsePLY(buffer) {
   const text = new TextDecoder().decode(buffer);
   const lines = text.split('\n');
   
-  let count = 0, headerEnd = 0;
+  let pointCount = 0, headerEnd = 0;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].startsWith('element vertex')) {
-      count = parseInt(lines[i].split(' ')[2]);
+      pointCount = parseInt(lines[i].split(' ')[2]);
     }
     if (lines[i] === 'end_header') {
       headerEnd = i + 1;
@@ -337,18 +337,34 @@ async function parsePLY(buffer) {
     }
   }
   
-  const data = new Float32Array(count * 7);
-  for (let i = 0; i < count; i++) {
+  // 每个点需要3个顶点来画三角形
+  const vertCount = pointCount * 3;
+  const data = new Float32Array(vertCount * 7);
+  
+  for (let i = 0; i < pointCount; i++) {
     const p = lines[headerEnd + i].trim().split(/\s+/);
-    data[i*7] = parseFloat(p[0]);
-    data[i*7+1] = parseFloat(p[1]);
-    data[i*7+2] = parseFloat(p[2]);
-    data[i*7+3] = (parseFloat(p[3]) || 128) / 255;
-    data[i*7+4] = (parseFloat(p[4]) || 128) / 255;
-    data[i*7+5] = (parseFloat(p[5]) || 128) / 255;
-    data[i*7+6] = 1.0;
+    const x = parseFloat(p[0]);
+    const y = parseFloat(p[1]);
+    const z = parseFloat(p[2]);
+    const r = (parseFloat(p[3]) || 128) / 255;
+    const g = (parseFloat(p[4]) || 128) / 255;
+    const b = (parseFloat(p[5]) || 128) / 255;
+    
+    // 复制3次（3个顶点组成三角形）
+    for (let j = 0; j < 3; j++) {
+      const idx = (i * 3 + j) * 7;
+      data[idx] = x;
+      data[idx+1] = y;
+      data[idx+2] = z;
+      data[idx+3] = r;
+      data[idx+4] = g;
+      data[idx+5] = b;
+      data[idx+6] = 1.0;
+    }
   }
-  loadCloud(data, count);
+  
+  loadCloud(data, vertCount);
+  status.textContent = `${pointCount.toLocaleString()} points loaded`;
 }
 
 window.addEventListener('resize', resize);
