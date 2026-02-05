@@ -75,9 +75,9 @@ struct VSOut {
   var o: VSOut;
   let basePos = u.mvp * vec4f(p, 1.0);
   
-  // 每个点用3个顶点画一个小三角形
+  // 每个点用3个顶点画一个小三角形（更小更圆）
   let triIdx = vid % 3u;
-  let size = u.pointSize * 0.008;
+  let size = u.pointSize * 0.003;
   var offset = vec2f(0.0, 0.0);
   if (triIdx == 0u) { offset = vec2f(0.0, size); }
   else if (triIdx == 1u) { offset = vec2f(-size * 0.866, -size * 0.5); }
