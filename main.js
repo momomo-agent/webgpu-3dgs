@@ -47,25 +47,34 @@ function resize() {
   canvas.height = window.innerHeight * devicePixelRatio;
 }
 
-// Shader - 优化版本，使用 point sprites
+// Shader - 使用小三角形代替点（WebGPU 不支持 point_size）
 const shaderCode = `
 struct Uniforms {
   mvp: mat4x4f,
   pointSize: f32,
+  aspect: f32,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 
 struct VSOut {
   @builtin(position) pos: vec4f,
   @location(0) col: vec4f,
-  @builtin(point_size) size: f32,
 }
 
-@vertex fn vs(@location(0) p: vec3f, @location(1) c: vec4f) -> VSOut {
+@vertex fn vs(@location(0) p: vec3f, @location(1) c: vec4f, @builtin(vertex_index) vid: u32) -> VSOut {
   var o: VSOut;
-  o.pos = u.mvp * vec4f(p, 1.0);
+  let basePos = u.mvp * vec4f(p, 1.0);
+  
+  // 每个点用3个顶点画一个小三角形
+  let triIdx = vid % 3u;
+  let size = u.pointSize / basePos.w * 0.01;
+  var offset = vec2f(0.0, 0.0);
+  if (triIdx == 0u) { offset = vec2f(0.0, size); }
+  else if (triIdx == 1u) { offset = vec2f(-size * 0.866, -size * 0.5); }
+  else { offset = vec2f(size * 0.866, -size * 0.5); }
+  
+  o.pos = basePos + vec4f(offset.x / u.aspect, offset.y, 0.0, 0.0);
   o.col = c;
-  o.size = u.pointSize / o.pos.w;
   return o;
 }
 
@@ -79,7 +88,7 @@ function createPipeline() {
   const shader = device.createShaderModule({ code: shaderCode });
   
   uniformBuffer = device.createBuffer({
-    size: 80,
+    size: 96,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   
@@ -110,7 +119,7 @@ function createPipeline() {
       entryPoint: 'fs',
       targets: [{ format }]
     },
-    primitive: { topology: 'point-list' }
+    primitive: { topology: 'triangle-list' }
   });
 }
 
@@ -146,41 +155,49 @@ function mulMat4(a, b) {
   return o;
 }
 
-// 生成默认点云 - 彩色球体
+// 生成默认点云 - 彩色球体（每个点3个顶点）
 function generateDefaultCloud() {
-  const count = 50000;
+  const pointCount = 50000;
+  const count = pointCount * 3; // 每个点3个顶点
   const data = new Float32Array(count * 7);
   
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < pointCount; i++) {
     // 球面均匀分布
     const u = Math.random(), v = Math.random();
     const theta = 2 * Math.PI * u;
     const phi = Math.acos(2 * v - 1);
     const r = 0.8 + Math.random() * 0.2;
     
-    data[i*7] = r * Math.sin(phi) * Math.cos(theta);
-    data[i*7+1] = r * Math.sin(phi) * Math.sin(theta);
-    data[i*7+2] = r * Math.cos(phi);
+    const x = r * Math.sin(phi) * Math.cos(theta);
+    const y = r * Math.sin(phi) * Math.sin(theta);
+    const z = r * Math.cos(phi);
     
     // HSL 颜色基于位置
-    const h = (Math.atan2(data[i*7+1], data[i*7]) + Math.PI) / (2 * Math.PI);
+    const h = (Math.atan2(y, x) + Math.PI) / (2 * Math.PI);
     const s = 0.8, l = 0.6;
     const c = (1 - Math.abs(2*l - 1)) * s;
-    const x = c * (1 - Math.abs((h*6) % 2 - 1));
+    const xc = c * (1 - Math.abs((h*6) % 2 - 1));
     const m = l - c/2;
     let r1, g1, b1;
     const hi = Math.floor(h * 6);
-    if (hi === 0) { r1=c; g1=x; b1=0; }
-    else if (hi === 1) { r1=x; g1=c; b1=0; }
-    else if (hi === 2) { r1=0; g1=c; b1=x; }
-    else if (hi === 3) { r1=0; g1=x; b1=c; }
-    else if (hi === 4) { r1=x; g1=0; b1=c; }
-    else { r1=c; g1=0; b1=x; }
+    if (hi === 0) { r1=c; g1=xc; b1=0; }
+    else if (hi === 1) { r1=xc; g1=c; b1=0; }
+    else if (hi === 2) { r1=0; g1=c; b1=xc; }
+    else if (hi === 3) { r1=0; g1=xc; b1=c; }
+    else if (hi === 4) { r1=xc; g1=0; b1=c; }
+    else { r1=c; g1=0; b1=xc; }
     
-    data[i*7+3] = r1 + m;
-    data[i*7+4] = g1 + m;
-    data[i*7+5] = b1 + m;
-    data[i*7+6] = 1.0;
+    // 每个点复制3次（3个顶点）
+    for (let j = 0; j < 3; j++) {
+      const idx = (i * 3 + j) * 7;
+      data[idx] = x;
+      data[idx+1] = y;
+      data[idx+2] = z;
+      data[idx+3] = r1 + m;
+      data[idx+4] = g1 + m;
+      data[idx+5] = b1 + m;
+      data[idx+6] = 1.0;
+    }
   }
   
   return { data, count };
@@ -227,6 +244,7 @@ function render(time) {
   const uniformData = new Float32Array(20);
   uniformData.set(mvp, 0);
   uniformData[16] = 3.0; // pointSize
+  uniformData[17] = aspect; // aspect ratio
   device.queue.writeBuffer(uniformBuffer, 0, uniformData);
   
   // 渲染
