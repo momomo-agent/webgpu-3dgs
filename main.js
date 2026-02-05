@@ -6,10 +6,10 @@ const loadBtn = document.getElementById('loadBtn');
 const fileInput = document.getElementById('fileInput');
 
 let device, context, format;
-let camera = { x: 0, y: 0, z: 3, rotX: 0.3, rotY: 0.5 };
+let camera = { x: 0, y: 0, z: 5, rotX: 0.5, rotY: 0 };
 let isDragging = false;
 let lastMouse = { x: 0, y: 0 };
-let animating = true;
+let animating = false;
 
 let vertexBuffer = null;
 let uniformBuffer = null;
