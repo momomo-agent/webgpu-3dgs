@@ -19,6 +19,7 @@ let vertexCount = 0;
 let depthTexture = null;
 let frameCount = 0;
 let fpsUpdateTime = 0;
+let pointSizeMultiplier = 10;
 
 // Init WebGPU
 async function initWebGPU() {
@@ -58,7 +59,7 @@ struct VSOut { @builtin(position) pos: vec4f, @location(0) col: vec4f, @location
   let basePos = u.mvp * vec4f(p, 1.0);
   // 6 vertices per quad (2 triangles)
   let quadIdx = vid % 6u;
-  let size = u.pointSize * 0.008;
+  let size = u.pointSize * 0.001;
   var offset = vec2f(0.0);
   var uv = vec2f(0.0);
   // Triangle 1: 0,1,2  Triangle 2: 0,2,3
@@ -198,7 +199,7 @@ function render(time) {
   const aspect = canvas.width / canvas.height;
   const mvp = mulMat4(perspective(Math.PI / 4, aspect, 0.1, 100), lookAt());
   const uniformData = new Float32Array(20);
-  uniformData.set(mvp, 0); uniformData[16] = 3.0; uniformData[17] = aspect;
+  uniformData.set(mvp, 0); uniformData[16] = pointSizeMultiplier; uniformData[17] = aspect;
   device.queue.writeBuffer(uniformBuffer, 0, uniformData);
   
   const encoder = device.createCommandEncoder();
@@ -266,4 +267,12 @@ async function init() {
   }
 }
 init();
+
+// 点大小滑块
+const sizeSlider = document.getElementById('sizeSlider');
+const sizeVal = document.getElementById('sizeVal');
+sizeSlider.addEventListener('input', e => {
+  pointSizeMultiplier = parseFloat(e.target.value);
+  sizeVal.textContent = e.target.value;
+});
 // cache bust 1770271687
